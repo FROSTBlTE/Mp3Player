@@ -5,51 +5,65 @@ import android.graphics.Typeface
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.media3.common.MediaItem
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
 
 class QueueAdapter(
     private val items: List<MediaItem>,
-    private val onItemClick: (Int) -> Unit // Callback function (Like a Delegate)
+    private val onItemClick: (Int) -> Unit
 ) : RecyclerView.Adapter<QueueAdapter.ViewHolder>() {
 
     private var selectedIndex: Int = -1
 
+    // 1. Update the ViewHolder to find the NEW IDs from item_song.xml
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        val title: TextView = view.findViewById(android.R.id.text1)
-        val artist: TextView = view.findViewById(android.R.id.text2)
+        val ivAlbumArt: ImageView = view.findViewById(R.id.ivAlbumArt)
+        val tvTitle: TextView = view.findViewById(R.id.tvSongTitle)
+        val tvArtist: TextView = view.findViewById(R.id.tvArtistName)
     }
 
-    // Call this from MainActivity when the song changes
     fun updateActiveIndex(newIndex: Int) {
         val oldIndex = selectedIndex
         selectedIndex = newIndex
-        notifyItemChanged(oldIndex) // Refresh old row (remove highlight)
-        notifyItemChanged(newIndex) // Refresh new row (add highlight)
+        notifyItemChanged(oldIndex)
+        notifyItemChanged(newIndex)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        // 2. Ensure we are inflating the modern item_song layout
         val view = LayoutInflater.from(parent.context)
-            .inflate(android.R.layout.simple_list_item_2, parent, false)
+            .inflate(R.layout.item_song, parent, false)
         return ViewHolder(view)
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val metadata = items[position].mediaMetadata
-        holder.title.text = metadata.title ?: "Unknown"
-        holder.artist.text = metadata.artist ?: "Unknown"
+        val mediaItem = items[position]
+        val metadata = mediaItem.mediaMetadata
 
-        // Update UI based on if this song is currently playing
+        // 3. Set text using the references in the ViewHolder
+        holder.tvTitle.text = metadata.title ?: "Unknown Title"
+        holder.tvArtist.text = metadata.artist ?: "Unknown Artist"
+
+        // 4. Use Glide to load the art safely
+        // Glide handles null URIs automatically, but the 'into' target MUST not be null
+        Glide.with(holder.itemView.context)
+            .load(metadata.artworkUri)
+            .placeholder(R.drawable.ic_play) // Shows while loading or if missing
+            .error(R.drawable.ic_play)       // Shows if loading fails
+            .into(holder.ivAlbumArt)         // This reference is now safe
+
+        // Highlight logic
         if (position == selectedIndex) {
-            holder.title.setTextColor(Color.CYAN) // Highlight color
-            holder.title.setTypeface(null, Typeface.BOLD)
+            holder.tvTitle.setTextColor(Color.parseColor("#FFC107")) // Yellow accent
+            holder.tvTitle.setTypeface(null, Typeface.BOLD)
         } else {
-            holder.title.setTextColor(Color.WHITE)
-            holder.title.setTypeface(null, Typeface.NORMAL)
+            holder.tvTitle.setTextColor(Color.WHITE)
+            holder.tvTitle.setTypeface(null, Typeface.NORMAL)
         }
 
-        // Handle Clicks
         holder.itemView.setOnClickListener {
             onItemClick(position)
         }

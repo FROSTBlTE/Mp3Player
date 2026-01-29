@@ -133,13 +133,18 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    // This is called whenever the song changes (Auto, Skip, or Click)
-                    val currentIndex = controller?.currentMediaItemIndex ?: -1
-                    queueAdapter?.updateActiveIndex(currentIndex)
+                    // We use 'post' to wait one "frame" so the controller has time to update its index
+                    val recyclerView = findViewById<RecyclerView>(R.id.rvQueue)
+                    recyclerView.post {
+                        val currentIndex = controller?.currentMediaItemIndex ?: -1
 
-                    // Also scroll the list to the current song so the user sees it
-                    if (currentIndex != -1) {
-                        findViewById<RecyclerView>(R.id.rvQueue).scrollToPosition(currentIndex)
+                        // Update the Cyan highlight in the list
+                        queueAdapter?.updateActiveIndex(currentIndex)
+
+                        // Scroll the list so the new song is visible
+                        if (currentIndex != -1) {
+                            recyclerView.smoothScrollToPosition(currentIndex)
+                        }
                     }
                 }
 
@@ -196,7 +201,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<Button>(R.id.btnNext).setOnClickListener {
+        findViewById<ImageButton>(R.id.btnNext).setOnClickListener {
             // This method is the best for handling Shuffle + Repeat All
             if (controller?.hasNextMediaItem() == true) {
                 controller?.seekToNext()
@@ -206,7 +211,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<Button>(R.id.btnPrev).setOnClickListener {
+        findViewById<ImageButton>(R.id.btnPrev).setOnClickListener {
             controller?.seekToPrevious()
         }
 
@@ -293,7 +298,8 @@ class MainActivity : AppCompatActivity() {
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.DATA
+            MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.ALBUM_ID
         )
 
         // Filter by folder if name provided
@@ -309,14 +315,21 @@ class MainActivity : AppCompatActivity() {
             val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
             val artistCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+            val albumIdCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
 
             while (it.moveToNext()) {
+                val albumId = it.getLong(albumIdCol)
                 val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, it.getLong(idCol))
+                val artworkUri = ContentUris.withAppendedId(
+                    android.net.Uri.parse("content://media/external/audio/albumart"),
+                    albumId
+                )
 
                 // Setting metadata is what sends info to your Car's screen!
                 val metadata = MediaMetadata.Builder()
                     .setTitle(it.getString(titleCol))
                     .setArtist(it.getString(artistCol))
+                    .setArtworkUri(artworkUri)
                     .build()
 
                 val mediaItem = MediaItem.Builder()
