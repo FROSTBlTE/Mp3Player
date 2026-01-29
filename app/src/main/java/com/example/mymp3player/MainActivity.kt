@@ -37,15 +37,12 @@ class MainActivity : AppCompatActivity() {
     private var isShuffleActive = false // Our "Master State"
     private var currentFolderName: String? = null
 
-    // 1. Define the "Request Permission" launcher (The Callback)
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
-            // Permission granted! You can now load the music.
             Toast.makeText(this, "Permission Granted", Toast.LENGTH_SHORT).show()
         } else {
-            // Permission denied.
             Toast.makeText(this, "Permission Denied. Cannot play music.", Toast.LENGTH_LONG).show()
         }
     }
@@ -430,7 +427,6 @@ class MainActivity : AppCompatActivity() {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_READY) {
                         // Try to find the index of the last played URI in the new list
-                        val items = mutableListOf<MediaItem>()
                         for (i in 0 until (controller?.mediaItemCount ?: 0)) {
                             if (controller?.getMediaItemAt(i)?.localConfiguration?.uri.toString() == lastUri) {
                                 controller?.seekTo(i, lastPos)
