@@ -22,7 +22,9 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import android.graphics.Color
 import android.widget.ImageButton
+import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
 
 private const val PREFS_NAME = "MusicPlayerPrefs"
 private const val KEY_URI = "last_uri"
@@ -104,8 +106,17 @@ class MainActivity : AppCompatActivity() {
             controller?.addListener(object : Player.Listener {
                 override fun onMediaMetadataChanged(metadata: MediaMetadata) {
                     // This triggers when the song changes
-                    findViewById<TextView>(R.id.tvSongTitle).text = metadata.title ?: "Unknown Title"
-                    findViewById<TextView>(R.id.tvArtist).text = metadata.artist ?: "Unknown Artist"
+                    findViewById<TextView>(R.id.tvBottomTitle).text = metadata.title ?: "Unknown Title"
+                    findViewById<TextView>(R.id.tvBottomArtist).text = metadata.artist ?: "Unknown Artist"
+
+                    // Update the Mini Album Art at the bottom
+                    val ivMiniArt = findViewById<ImageView>(R.id.ivMiniArt)
+                    if (ivMiniArt != null) {
+                        Glide.with(this@MainActivity)
+                            .load(metadata.artworkUri)
+                            .error(R.drawable.ic_play)
+                            .into(ivMiniArt)
+                    }
                 }
 
                 override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -133,21 +144,16 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                    // We use 'post' to wait one "frame" so the controller has time to update its index
+                    // This handles the highlight in the queue we fixed earlier
                     val recyclerView = findViewById<RecyclerView>(R.id.rvQueue)
                     recyclerView.post {
                         val currentIndex = controller?.currentMediaItemIndex ?: -1
-
-                        // Update the Cyan highlight in the list
                         queueAdapter?.updateActiveIndex(currentIndex)
-
-                        // Scroll the list so the new song is visible
                         if (currentIndex != -1) {
                             recyclerView.smoothScrollToPosition(currentIndex)
                         }
                     }
                 }
-
             })
         }, MoreExecutors.directExecutor())
 
@@ -419,38 +425,51 @@ class MainActivity : AppCompatActivity() {
     private fun loadPlaybackState() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val lastFolder = prefs.getString(KEY_FOLDER, null)
-
-        if (lastFolder != null) {
-            if (lastFolder == "ALL_MUSIC") {
-                loadMusicFromStorage(null) // Load everything
-            } else {
-                loadMusicFromStorage(lastFolder) // Load specific folder
-            }
-        }
-
         val lastUri = prefs.getString(KEY_URI, null)
         val lastPos = prefs.getLong(KEY_POS, 0L)
 
         if (lastFolder != null) {
-            // This repopulates the entire playlist and the Queue UI
-            loadMusicFromStorage(lastFolder)
+            // 1. Load the folder (Only call this once!)
+            if (lastFolder == "ALL_MUSIC") {
+                loadMusicFromStorage(null)
+            } else {
+                loadMusicFromStorage(lastFolder)
+            }
 
-            // Now, find the song we were on and jump to the correct time
+            // 2. Wait for the player to be ready to restore position and UI
             controller?.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_READY) {
-                        // Try to find the index of the last played URI in the new list
+
+                        // A. Find the last song index by its URI
                         for (i in 0 until (controller?.mediaItemCount ?: 0)) {
                             if (controller?.getMediaItemAt(i)?.localConfiguration?.uri.toString() == lastUri) {
                                 controller?.seekTo(i, lastPos)
                                 break
                             }
                         }
-                        // Remove listener so this only happens once on boot
-                        controller?.removeListener(this)
 
-                        // FORCE the Seekbar to the correct position visually
+                        // B. UPDATE THE UI LABELS HERE (The fix for your "Title" issue)
+                        val metadata = controller?.currentMediaItem?.mediaMetadata
+                        if (metadata != null) {
+                            findViewById<TextView>(R.id.tvBottomTitle).text = metadata.title ?: "Unknown Title"
+                            findViewById<TextView>(R.id.tvBottomArtist).text = metadata.artist ?: "Unknown Artist"
+
+                            // Update the mini-player image too
+                            val miniArt = findViewById<ImageView>(R.id.ivMiniArt)
+                            if (miniArt != null) {
+                                Glide.with(this@MainActivity)
+                                    .load(metadata.artworkUri)
+                                    .error(R.drawable.ic_play)
+                                    .into(miniArt)
+                            }
+                        }
+
+                        // C. Sync the Seekbar
                         findViewById<SeekBar>(R.id.seekBar).progress = lastPos.toInt()
+
+                        // D. Remove this listener so it doesn't fire again
+                        controller?.removeListener(this)
                     }
                 }
             })

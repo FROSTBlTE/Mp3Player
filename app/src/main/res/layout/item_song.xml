@@ -24,8 +24,7 @@
         android:textColor="#FFFFFF"
         android:textSize="16sp"
         android:textStyle="bold"
-        android:singleLine="true"
-        android:ellipsize="end"
+        android:maxLines="2"
         app:layout_constraintStart_toEndOf="@id/ivAlbumArt"
         app:layout_constraintTop_toTopOf="@id/ivAlbumArt"
         app:layout_constraintEnd_toEndOf="parent" /> <!-- Now goes to edge of screen -->

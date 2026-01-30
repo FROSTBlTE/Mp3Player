@@ -61,7 +61,7 @@
         android:layout_below="@id/shuffleHeader"
         android:padding="8dp" />
 
-    <!-- 4. Bottom Player Section (Modern Design) -->
+    <!-- 4. Bottom Player Section (Redesigned for Full Width) -->
     <LinearLayout
         android:id="@+id/playerControls"
         android:layout_width="match_parent"
@@ -71,7 +71,7 @@
         android:orientation="vertical"
         android:padding="12dp">
 
-        <!-- Seekbar and Timers -->
+        <!-- A. Seekbar and Timers Row -->
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
@@ -86,20 +86,50 @@
             android:progressTint="#FFC107"
             android:thumbTint="#FFC107" />
 
-        <!-- Playback Controls -->
-        <RelativeLayout
+        <!-- B. NEW: Song Title and Artist Row (Full Width) -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp">
 
-            <LinearLayout
+            <TextView
+                android:id="@+id/tvBottomTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:layout_toStartOf="@+id/centerControls">
-                <TextView android:id="@+id/tvSongTitle" android:layout_width="150dp" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:textStyle="bold" android:singleLine="true" android:text="Title" />
-                <TextView android:id="@+id/tvArtist" android:layout_width="150dp" android:layout_height="wrap_content" android:textColor="#888888" android:singleLine="true" android:text="Artist" />
-            </LinearLayout>
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="18sp"
+                android:gravity="center"
+                android:maxLines="1"
+                android:ellipsize="marquee"
+                android:text="Waiting for music..." />
+
+            <TextView
+                android:id="@+id/tvBottomArtist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFC107"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:text="Artist" />
+        </LinearLayout>
+
+        <!-- C. Buttons Row (Centered) -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivMiniArt"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_alignParentStart="true"
+                android:layout_centerVertical="true"
+                android:scaleType="centerCrop"
+                app:shapeAppearanceOverlay="@style/RoundedSquare" />
 
             <LinearLayout
                 android:id="@+id/centerControls"
