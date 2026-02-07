@@ -91,6 +91,8 @@ class MainActivity : AppCompatActivity() {
             // Restores the last song and state right before the app closed
             loadPlaybackState()
 
+            handleIncomingIntent()
+
             // Sync UI with the actual state of the controller
             val isShuffleOn = controller?.shuffleModeEnabled ?: false
             findViewById<ImageButton>(R.id.btnShuffle).setColorFilter(
@@ -481,6 +483,24 @@ class MainActivity : AppCompatActivity() {
         val minutes = totalSeconds / 60
         val seconds = totalSeconds % 60
         return String.format("%d:%02d", minutes, seconds)
+    }
+
+    private fun handleIncomingIntent() {
+        // Check if the app was opened by clicking a file
+        val intentUri = intent?.data
+        if (intentUri != null) {
+            // Create a MediaItem from the file the user clicked
+            val mediaItem = MediaItem.fromUri(intentUri)
+
+            // Load it into the player and play immediately
+            controller?.setMediaItem(mediaItem)
+            controller?.prepare()
+            controller?.play()
+
+            // Optional: Update UI
+            findViewById<TextView>(R.id.tvBottomTitle).text = "External File"
+            findViewById<TextView>(R.id.tvBottomArtist).text = "Tap to view details"
+        }
     }
 
     override fun onStop() {
