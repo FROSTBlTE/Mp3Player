@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private var isShuffleActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var loadingJob: Job? = null
 
     private val PREFS_NAME = "MusicPrefs"
     private val KEY_FOLDER = "last_folder"
@@ -41,6 +42,12 @@ class MainActivity : AppCompatActivity() {
     private val openFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
             contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Update variables and save immediately
+            currentFolderName = it.toString()
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            prefs.putString(KEY_FOLDER, currentFolderName)
+            prefs.apply()
+
             loadFromUriRecursive(it)
         }
     }
@@ -87,7 +94,17 @@ class MainActivity : AppCompatActivity() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             updateBottomPlayerUI(mediaItem)
             val index = controller?.currentMediaItemIndex ?: -1
-            queueAdapter?.updateActiveIndex(index)
+
+            if (index != -1) {
+                // 1. Update the highlight color in the adapter
+                queueAdapter?.updateActiveIndex(index)
+
+                val searchView = findViewById<androidx.appcompat.widget.SearchView>(R.id.searchView)
+                if (searchView.query.isNullOrEmpty()) {
+                    findViewById<RecyclerView>(R.id.rvQueue).smoothScrollToPosition(index)
+                }
+            }
+
             saveCurrentState()
         }
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -149,11 +166,45 @@ class MainActivity : AppCompatActivity() {
         currentFolderName = treeUri.toString()
         val songList = mutableListOf<MediaItem>()
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        loadingJob?.cancel()
+
+        loadingJob = lifecycleScope.launch(Dispatchers.IO) {
             val root = DocumentFile.fromTreeUri(this@MainActivity, treeUri)
-            if (root != null) scanRecursive(root, songList)
+
+            if (root == null) {
+                withContext(Dispatchers.Main) { updateLoadingProgress(1, 1) }
+                return@launch
+            }
+
+            val allFiles = mutableListOf<DocumentFile>()
+            fun collect(f: DocumentFile) {
+                f.listFiles().forEach { if (it.isDirectory) collect(it) else if (it.name?.endsWith(".mp3") == true) allFiles.add(it) }
+            }
+            collect(root)
+
+            val total = allFiles.size
+            if (total == 0) {
+                withContext(Dispatchers.Main) {
+                    updateLoadingProgress(1, 1)
+                    Toast.makeText(this@MainActivity, "No MP3s found in this folder", Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+
+            val mmr = MediaMetadataRetriever()
+
+            allFiles.forEachIndexed { index, file ->
+                yield()
+                withContext(Dispatchers.Main) { updateLoadingProgress(index + 1, total) }
+
+                // Your createMediaItemFromFile logic here...
+                val mediaItem = createMediaItemFromFile(file)
+                songList.add(mediaItem)
+            }
+            mmr.release()
 
             withContext(Dispatchers.Main) {
+                updateLoadingProgress(1,1)
                 if (songList.isNotEmpty()) {
                     controller?.setMediaItems(songList)
                     controller?.prepare()
@@ -298,9 +349,11 @@ class MainActivity : AppCompatActivity() {
     private fun loadAllMusic(seekToUri: String? = null, seekPos: Long = 0L) {
         currentFolderName = "ALL_MUSIC"
         val songList = mutableListOf<MediaItem>()
+        loadingJob?.cancel()
+
         Toast.makeText(this, "Scanning all music (this may take a moment)...", Toast.LENGTH_SHORT).show()
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        loadingJob = lifecycleScope.launch(Dispatchers.IO) {
             val projection = arrayOf(
                 MediaStore.Audio.Media._ID,
                 MediaStore.Audio.Media.DATA, // We need the file path/data to extract art
@@ -317,8 +370,14 @@ class MainActivity : AppCompatActivity() {
                 val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
 
+                val total = cursor.count
+                var count = 0
                 val mmr = MediaMetadataRetriever()
                 while (cursor.moveToNext()) {
+                    yield()
+                    count++
+                    withContext(Dispatchers.Main) { updateLoadingProgress(count, total) }
+
                     val id = cursor.getLong(idCol)
                     val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
 
@@ -355,6 +414,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
+                updateLoadingProgress(1,1)
                 if (songList.isNotEmpty()) {
                     controller?.setMediaItems(songList)
                     controller?.prepare()
@@ -367,6 +427,41 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun updateLoadingProgress(current: Int, total: Int) {
+        val container = findViewById<LinearLayout>(R.id.progressContainer)
+        val bar = findViewById<ProgressBar>(R.id.determinateBar)
+        val text = findViewById<TextView>(R.id.tvProgressText)
+        val queue = findViewById<RecyclerView>(R.id.rvQueue)
+
+        // Ensure we handle 0 total or finished state
+        if (total > 0 && current < total) {
+            container.visibility = android.view.View.VISIBLE
+            queue.alpha = 0.2f
+            bar.max = total
+            bar.progress = current
+            val percent = ((current.toFloat() / total.toFloat()) * 100).toInt()
+            text.text = "Loading: $percent%"
+        } else {
+            container.visibility = android.view.View.GONE
+            queue.alpha = 1.0f
+        }
+    }
+//    private fun setLoading(isLoading: Boolean) {
+//        val spinner = findViewById<ProgressBar>(R.id.loadingSpinner)
+//        val queue = findViewById<RecyclerView>(R.id.rvQueue)
+//        val header = findViewById<LinearLayout>(R.id.header)
+//
+//        if (isLoading) {
+//            spinner.visibility = android.view.View.VISIBLE
+//            queue.alpha = 0.2f
+//            header.alpha = 0.5f
+//        } else {
+//            spinner.visibility = android.view.View.GONE
+//            queue.alpha = 1.0f
+//            header.alpha = 1.0f
+//        }
+//    }
 
 }
 
