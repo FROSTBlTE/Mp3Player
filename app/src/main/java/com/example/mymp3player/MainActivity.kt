@@ -2,6 +2,7 @@ package com.example.mymp3player
 
 import android.Manifest
 import android.content.*
+import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
@@ -20,6 +21,7 @@ import androidx.media3.session.MediaController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.*
 
@@ -29,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private var currentFolderName: String? = null
     private var isShuffleActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var controllerFuture: ListenableFuture<MediaController>? = null
 
     private val PREFS_NAME = "MusicPrefs"
     private val KEY_FOLDER = "last_folder"
@@ -51,23 +54,33 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         val sessionToken = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        val controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
-        controllerFuture.addListener({
-            controller = controllerFuture.get()
-            controller?.addListener(playerListener)
-            setupUI()
 
-            // Only load from prefs if the controller is empty.
-            // This prevents the "switch back" when returning from the folder picker.
-            if (controller?.mediaItemCount == 0) {
-                loadPlaybackState()
-            } else {
-                // If it's already playing, just refresh the UI
-                updateBottomPlayerUI(controller?.currentMediaItem)
-                refreshQueueFromController()
-                startSeekBarTimer()
-            }
-        }, MoreExecutors.directExecutor())
+        controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
+        controllerFuture?.let { future ->
+            future.addListener({
+                try {
+                    controller = future.get()
+                    controller?.addListener(playerListener)
+                    setupUI()
+                    if (controller?.mediaItemCount == 0) {
+                        loadPlaybackState()
+                    } else {
+                        // If it's already playing, just refresh the UI
+                        refreshQueueFromController()
+                        updateBottomPlayerUI(controller?.currentMediaItem)
+
+                        if (currentFolderName == null) {
+                            val firstItemUri = controller?.getMediaItemAt(0)?.requestMetadata?.mediaUri
+                            // We don't know the folder Uri exactly, so we'll default to All Music
+                            // unless we are sure.
+                        }
+                    }
+                    startSeekBarTimer()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }, MoreExecutors.directExecutor())
+        }
     }
 
     private val playerListener = object : Player.Listener {
@@ -75,20 +88,31 @@ class MainActivity : AppCompatActivity() {
             updateBottomPlayerUI(mediaItem)
             val index = controller?.currentMediaItemIndex ?: -1
             queueAdapter?.updateActiveIndex(index)
+            saveCurrentState()
         }
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             findViewById<ImageButton>(R.id.btnPlay).setImageResource(
                 if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
             )
+
+            if (!isPlaying) {
+                saveCurrentState()
+            }
         }
     }
 
     private fun updateBottomPlayerUI(item: MediaItem?) {
+        if (isFinishing || isDestroyed) return
+
         val meta = item?.mediaMetadata
         findViewById<TextView>(R.id.tvBottomTitle).text = meta?.title ?: "Unknown"
         findViewById<TextView>(R.id.tvBottomArtist).text = meta?.artist ?: "Unknown"
-        Glide.with(this).load(meta?.artworkData ?: item?.requestMetadata?.mediaUri)
-            .placeholder(R.drawable.ic_play).into(findViewById(R.id.ivMiniArt))
+
+        Glide.with(this)
+            .load(meta?.artworkData ?: item?.requestMetadata?.mediaUri)
+            .signature(com.bumptech.glide.signature.ObjectKey(item?.requestMetadata?.mediaUri.toString()))
+            .placeholder(R.drawable.ic_play)
+            .into(findViewById(R.id.ivMiniArt))
     }
 
     private fun setupUI() {
@@ -121,7 +145,6 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // THIS IS THE FIX FOR UNRESPONSIVENESS: Running scanning in background
     private fun loadFromUriRecursive(treeUri: Uri, seekToUri: String? = null, seekPos: Long = 0L) {
         currentFolderName = treeUri.toString()
         val songList = mutableListOf<MediaItem>()
@@ -217,6 +240,8 @@ class MainActivity : AppCompatActivity() {
         val pos = prefs.getLong(KEY_POS, 0L)
 
         if (folder != null) {
+            currentFolderName = folder
+
             if (folder == "ALL_MUSIC") {
                 loadAllMusic(lastUri, pos)
             } else {
@@ -227,17 +252,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
-        // Save state whenever the app goes to background
-        val currentItem = controller?.currentMediaItem
-        if (currentItem != null) {
-            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            prefs.putString(KEY_FOLDER, currentFolderName)
-            prefs.putString(KEY_URI, currentItem.requestMetadata.mediaUri.toString())
-            prefs.putLong(KEY_POS, controller?.currentPosition ?: 0L)
-            prefs.apply()
+        saveCurrentState()
+
+        controller?.removeListener(playerListener)
+        controllerFuture?.let {
+            MediaController.releaseFuture(it)
         }
+        controller = null
 
         super.onStop()
+    }
+
+    private fun saveCurrentState() {
+        val currentController = controller ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+
+        currentFolderName?.let {
+            prefs.putString(KEY_FOLDER, it)
+        }
+
+        val currentItem = currentController?.currentMediaItem
+        if (currentItem != null) {
+            prefs.putString(KEY_URI, currentItem.requestMetadata.mediaUri.toString())
+            prefs.putLong(KEY_POS, currentController.currentPosition)
+        }
+
+        prefs.apply()
     }
 
     private fun refreshQueueFromController() {
@@ -255,7 +295,79 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadAllMusic(seekToUri: String? = null, seekPos: Long = 0L) { }
+    private fun loadAllMusic(seekToUri: String? = null, seekPos: Long = 0L) {
+        currentFolderName = "ALL_MUSIC"
+        val songList = mutableListOf<MediaItem>()
+        Toast.makeText(this, "Scanning all music (this may take a moment)...", Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val projection = arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.DATA, // We need the file path/data to extract art
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST
+            )
+
+            val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+            contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection, selection, null, null
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+
+                val mmr = MediaMetadataRetriever()
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+
+                    var title = cursor.getString(titleCol) ?: "Unknown"
+                    var artist = cursor.getString(artistCol) ?: "Unknown"
+                    var art: ByteArray? = null
+
+                    // MANUALLY EXTRACT UNIQUE ART for this specific file ID
+                    try {
+                        contentResolver.openFileDescriptor(contentUri, "r")?.use { pfd ->
+                            mmr.setDataSource(pfd.fileDescriptor)
+                            art = mmr.embeddedPicture
+                            // Optional: fill in missing title/artist from file tags if MediaStore is empty
+                            if (title == "Unknown") title = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: "Unknown"
+                        }
+                    } catch (e: Exception) { /* Skip if file unreadable */ }
+
+                    val mediaItem = MediaItem.Builder()
+                        .setUri(contentUri)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(title)
+                                .setArtist(artist)
+                                .setArtworkData(art, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                                .build()
+                        )
+                        .setRequestMetadata(
+                            MediaItem.RequestMetadata.Builder().setMediaUri(contentUri).build()
+                        )
+                        .build()
+                    songList.add(mediaItem)
+                }
+                mmr.release()
+            }
+
+            withContext(Dispatchers.Main) {
+                if (songList.isNotEmpty()) {
+                    controller?.setMediaItems(songList)
+                    controller?.prepare()
+                    updateQueueUI(songList)
+                    if (seekToUri != null) {
+                        val index = songList.indexOfFirst { it.requestMetadata.mediaUri.toString() == seekToUri }
+                        if (index != -1) controller?.seekTo(index, seekPos)
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 val DocumentFile.nameWithoutExtension: String get() = name?.substringBeforeLast(".") ?: ""

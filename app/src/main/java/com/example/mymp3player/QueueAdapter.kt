@@ -32,12 +32,26 @@ class QueueAdapter(private val fullList: List<MediaItem>, private val onClick: (
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = displayList[position]
-        holder.title.text = item.mediaMetadata.title
-        holder.artist.text = item.mediaMetadata.artist
+        val meta = item.mediaMetadata
 
-        Glide.with(holder.itemView).load(item.mediaMetadata.artworkData ?: item.requestMetadata.mediaUri)
-            .placeholder(R.drawable.ic_play).into(holder.art)
+        holder.title.text = meta.title
+        holder.artist.text = meta.artist
 
+        // 1. Define the source: prioritize the extracted bytes (artworkData)
+        // 2. If bytes are missing, try the mediaUri as a fallback
+        val artSource: Any? = meta.artworkData ?: item.requestMetadata.mediaUri
+
+        Glide.with(holder.itemView.context)
+            .load(artSource)
+            // Adding the signature ensures that if two songs have different art
+            // but the same name, Glide won't show the wrong one from cache.
+            .signature(com.bumptech.glide.signature.ObjectKey(item.requestMetadata.mediaUri.toString()))
+            .placeholder(R.drawable.ic_play)
+            .error(R.drawable.ic_play)
+            .centerCrop()
+            .into(holder.art)
+
+        // Selection logic
         val isSel = fullList.indexOf(item) == selectedIdx
         holder.title.setTextColor(if (isSel) Color.parseColor("#FFC107") else Color.WHITE)
         holder.title.setTypeface(null, if (isSel) Typeface.BOLD else Typeface.NORMAL)
