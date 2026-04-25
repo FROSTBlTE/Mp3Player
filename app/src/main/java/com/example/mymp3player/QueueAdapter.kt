@@ -2,72 +2,86 @@ package com.example.mymp3player
 
 import android.graphics.Color
 import android.graphics.Typeface
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.TextView
+import android.view.*
+import android.widget.*
 import androidx.media3.common.MediaItem
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 
-class QueueAdapter(
-    private val items: List<MediaItem>,
-    private val onItemClick: (Int) -> Unit
-) : RecyclerView.Adapter<QueueAdapter.ViewHolder>() {
+class QueueAdapter(private val fullList: List<MediaItem>, private val onClick: (Int) -> Unit) :
+    RecyclerView.Adapter<QueueAdapter.VH>(), Filterable {
 
-    private var selectedIndex: Int = -1
+    private var displayList = fullList
+    private var selectedIdx = -1
 
-    // 1. Update the ViewHolder to find the NEW IDs from item_song.xml
-    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        val ivAlbumArt: ImageView = view.findViewById(R.id.ivAlbumArt)
-        val tvTitle: TextView = view.findViewById(R.id.tvSongTitle)
-        val tvArtist: TextView = view.findViewById(R.id.tvArtistName)
+    class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val art: ImageView = v.findViewById(R.id.ivAlbumArt)
+        val title: TextView = v.findViewById(R.id.tvSongTitle)
+        val artist: TextView = v.findViewById(R.id.tvArtistName)
     }
 
-    fun updateActiveIndex(newIndex: Int) {
-        val oldIndex = selectedIndex
-        selectedIndex = newIndex
-        notifyItemChanged(oldIndex)
-        notifyItemChanged(newIndex)
+    fun updateActiveIndex(i: Int) {
+        val old = selectedIdx; selectedIdx = i
+        notifyItemChanged(old); notifyItemChanged(selectedIdx)
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        // 2. Ensure we are inflating the modern item_song layout
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_song, parent, false)
-        return ViewHolder(view)
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val v = LayoutInflater.from(parent.context).inflate(R.layout.item_song, parent, false)
+        return VH(v)
     }
 
-    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val mediaItem = items[position]
-        val metadata = mediaItem.mediaMetadata
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val item = displayList[position]
+        holder.title.text = item.mediaMetadata.title
+        holder.artist.text = item.mediaMetadata.artist
 
-        // 3. Set text using the references in the ViewHolder
-        holder.tvTitle.text = metadata.title ?: "Unknown Title"
-        holder.tvArtist.text = metadata.artist ?: "Unknown Artist"
+        Glide.with(holder.itemView).load(item.mediaMetadata.artworkData ?: item.requestMetadata.mediaUri)
+            .placeholder(R.drawable.ic_play).into(holder.art)
 
-        // 4. Use Glide to load the art safely
-        // Glide handles null URIs automatically, but the 'into' target MUST not be null
-        Glide.with(holder.itemView.context)
-            .load(metadata.artworkUri)
-            .placeholder(R.drawable.ic_play) // Shows while loading or if missing
-            .error(R.drawable.ic_play)       // Shows if loading fails
-            .into(holder.ivAlbumArt)         // This reference is now safe
+        val isSel = fullList.indexOf(item) == selectedIdx
+        holder.title.setTextColor(if (isSel) Color.parseColor("#FFC107") else Color.WHITE)
+        holder.title.setTypeface(null, if (isSel) Typeface.BOLD else Typeface.NORMAL)
 
-        // Highlight logic
-        if (position == selectedIndex) {
-            holder.tvTitle.setTextColor(Color.parseColor("#FFC107")) // Yellow accent
-            holder.tvTitle.setTypeface(null, Typeface.BOLD)
-        } else {
-            holder.tvTitle.setTextColor(Color.WHITE)
-            holder.tvTitle.setTypeface(null, Typeface.NORMAL)
+        holder.itemView.setOnClickListener { onClick(fullList.indexOf(item)) }
+    }
+
+    override fun getItemCount() = displayList.size
+
+    override fun getFilter(): android.widget.Filter {
+        return object : android.widget.Filter() {
+            override fun performFiltering(constraint: CharSequence?): FilterResults {
+                val results = FilterResults()
+                val query = constraint?.toString()?.lowercase() ?: ""
+
+                // We use a manual list and a loop to avoid the compiler recursion bug
+                val filteredList = mutableListOf<MediaItem>()
+
+                if (query.isEmpty()) {
+                    filteredList.addAll(fullList)
+                } else {
+                    // Manual for-loop is the safest way to fix the 'Type Checking' error
+                    for (item in fullList) {
+                        val title = item.mediaMetadata.title?.toString()?.lowercase() ?: ""
+                        val artist = item.mediaMetadata.artist?.toString()?.lowercase() ?: ""
+
+                        if (title.contains(query) || artist.contains(query)) {
+                            filteredList.add(item)
+                        }
+                    }
+                }
+
+                results.values = filteredList
+                results.count = filteredList.size
+                return results
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            override fun publishResults(constraint: CharSequence?, results: FilterResults?) {
+                // Safe cast using the 'as?' operator
+                val newDisplayList = results?.values as? List<MediaItem>
+                displayList = newDisplayList ?: fullList
+                notifyDataSetChanged()
+            }
         }
-
-        holder.itemView.setOnClickListener {
-            onItemClick(position)
-        }
     }
-
-    override fun getItemCount() = items.size
 }
