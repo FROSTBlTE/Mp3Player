@@ -39,6 +39,10 @@ class MainActivity : AppCompatActivity() {
     private val KEY_URI = "last_uri"
     private val KEY_POS = "last_pos"
 
+    private val viewModel: MusicViewModel by lazy {
+        androidx.lifecycle.ViewModelProvider(this)[MusicViewModel::class.java]
+    }
+
     private val openFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
             contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -69,19 +73,40 @@ class MainActivity : AppCompatActivity() {
                     controller = future.get()
                     controller?.addListener(playerListener)
                     setupUI()
-                    if (controller?.mediaItemCount == 0) {
-                        loadPlaybackState()
-                    } else {
-                        // If it's already playing, just refresh the UI
+
+                    // 1. Check if the Service already has music (it was playing in background)
+                    if (controller?.mediaItemCount ?: 0 > 0) {
                         refreshQueueFromController()
                         updateBottomPlayerUI(controller?.currentMediaItem)
-
-                        if (currentFolderName == null) {
-                            val firstItemUri = controller?.getMediaItemAt(0)?.requestMetadata?.mediaUri
-                            // We don't know the folder Uri exactly, so we'll default to All Music
-                            // unless we are sure.
-                        }
                     }
+                    // 2. Check if we have the list cached in our ViewModel (Warm Start)
+                    else if (viewModel.cachedSongList != null) {
+                        val list = viewModel.cachedSongList!!
+                        currentFolderName = viewModel.currentFolder
+                        controller?.setMediaItems(list)
+                        controller?.prepare()
+                        updateQueueUI(list) // This refreshes the RecyclerView
+
+                        // Seek to where we were
+                        loadPlaybackStateOnlySeek()
+                    }
+                    else{
+                        loadPlaybackState()
+                    }
+
+//                    if (controller?.mediaItemCount == 0) {
+//                        loadPlaybackState()
+//                    } else {
+//                        // If it's already playing, just refresh the UI
+//                        refreshQueueFromController()
+//                        updateBottomPlayerUI(controller?.currentMediaItem)
+//
+//                        if (currentFolderName == null) {
+//                            val firstItemUri = controller?.getMediaItemAt(0)?.requestMetadata?.mediaUri
+//                            // We don't know the folder Uri exactly, so we'll default to All Music
+//                            // unless we are sure.
+//                        }
+//                    }
                     startSeekBarTimer()
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -254,6 +279,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateQueueUI(list: List<MediaItem>) {
+        // Cache the list in the ViewModel
+        viewModel.cachedSongList = list
+        viewModel.currentFolder = currentFolderName
+
         val rv = findViewById<RecyclerView>(R.id.rvQueue)
         rv.layoutManager = LinearLayoutManager(this)
         queueAdapter = QueueAdapter(list) { index ->
@@ -447,21 +476,18 @@ class MainActivity : AppCompatActivity() {
             queue.alpha = 1.0f
         }
     }
-//    private fun setLoading(isLoading: Boolean) {
-//        val spinner = findViewById<ProgressBar>(R.id.loadingSpinner)
-//        val queue = findViewById<RecyclerView>(R.id.rvQueue)
-//        val header = findViewById<LinearLayout>(R.id.header)
-//
-//        if (isLoading) {
-//            spinner.visibility = android.view.View.VISIBLE
-//            queue.alpha = 0.2f
-//            header.alpha = 0.5f
-//        } else {
-//            spinner.visibility = android.view.View.GONE
-//            queue.alpha = 1.0f
-//            header.alpha = 1.0f
-//        }
-//    }
+
+    private fun loadPlaybackStateOnlySeek() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val lastUri = prefs.getString(KEY_URI, null)
+        val pos = prefs.getLong(KEY_POS, 0L)
+
+        val list = viewModel.cachedSongList ?: return
+        val index = list.indexOfFirst { it.requestMetadata.mediaUri.toString() == lastUri }
+        if (index != -1) {
+            controller?.seekTo(index, pos)
+        }
+    }
 
 }
 
