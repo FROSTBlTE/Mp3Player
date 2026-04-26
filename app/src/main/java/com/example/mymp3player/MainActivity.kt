@@ -74,6 +74,12 @@ class MainActivity : AppCompatActivity() {
                     controller?.addListener(playerListener)
                     setupUI()
 
+                    // CHECK FOR EXTERNAL INTENT FIRST
+                    if (intent?.action == Intent.ACTION_VIEW) {
+                        handleExternalIntent(intent)
+                        // Clear the intent action so it doesn't trigger again on rotate
+                        intent.action = null
+                    } else
                     // 1. Check if the Service already has music (it was playing in background)
                     if (controller?.mediaItemCount ?: 0 > 0) {
                         refreshQueueFromController()
@@ -94,24 +100,19 @@ class MainActivity : AppCompatActivity() {
                         loadPlaybackState()
                     }
 
-//                    if (controller?.mediaItemCount == 0) {
-//                        loadPlaybackState()
-//                    } else {
-//                        // If it's already playing, just refresh the UI
-//                        refreshQueueFromController()
-//                        updateBottomPlayerUI(controller?.currentMediaItem)
-//
-//                        if (currentFolderName == null) {
-//                            val firstItemUri = controller?.getMediaItemAt(0)?.requestMetadata?.mediaUri
-//                            // We don't know the folder Uri exactly, so we'll default to All Music
-//                            // unless we are sure.
-//                        }
-//                    }
                     startSeekBarTimer()
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
             }, MoreExecutors.directExecutor())
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent) // Update the activity intent
+        if (intent?.action == Intent.ACTION_VIEW) {
+            handleExternalIntent(intent)
         }
     }
 
@@ -289,7 +290,16 @@ class MainActivity : AppCompatActivity() {
             controller?.seekTo(index, 0L)
             controller?.play()
         }
+
+        val currentIndex = controller?.currentMediaItemIndex ?: -1
+        queueAdapter?.updateActiveIndex(currentIndex)
+
         rv.adapter = queueAdapter
+
+        // Scroll to it if it's not the first song
+        if (currentIndex > 0) {
+            rv.scrollToPosition(currentIndex)
+        }
     }
 
     private fun startSeekBarTimer() {
@@ -322,10 +332,24 @@ class MainActivity : AppCompatActivity() {
         if (folder != null) {
             currentFolderName = folder
 
-            if (folder == "ALL_MUSIC") {
-                loadAllMusic(lastUri, pos)
-            } else {
-                loadFromUriRecursive(Uri.parse(folder), lastUri, pos)
+            when (folder) {
+                "ALL_MUSIC" -> loadAllMusic(lastUri, pos)
+                "EXTERNAL_FILE" -> {
+                    lastUri?.let { uriStr ->
+                        try {
+                            handleExternalIntent(Intent().apply { data = Uri.parse(uriStr) })
+                        } catch (e: Exception) {
+                            // If the permission expired, just load All Music instead of crashing
+                            //loadAllMusic()
+                            Toast.makeText(
+                                this,
+                                "Failed to load external file!",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+                else -> loadFromUriRecursive(Uri.parse(folder), lastUri, pos)
             }
             startSeekBarTimer()
         }
@@ -486,6 +510,81 @@ class MainActivity : AppCompatActivity() {
         val index = list.indexOfFirst { it.requestMetadata.mediaUri.toString() == lastUri }
         if (index != -1) {
             controller?.seekTo(index, pos)
+        }
+    }
+
+    private fun handleExternalIntent(intent: Intent) {
+        val uri = intent.data ?: return
+        currentFolderName = "EXTERNAL_FILE"
+        viewModel.cachedSongList = null
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            var title: String? = null
+            var artist: String? = null
+            var art: ByteArray? = null
+
+            // STEP 1: Try querying the Android MediaStore (The system database)
+            // This is the best way for the URI shown in your screenshot
+            try {
+                val projection = arrayOf(
+                    MediaStore.Audio.Media.TITLE,
+                    MediaStore.Audio.Media.ARTIST
+                )
+                contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        title = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE))
+                        artist = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST))
+                    }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+
+            // STEP 2: Fallback to MediaMetadataRetriever if database query failed
+            // (Useful for files from Downloads folder or 3rd party apps)
+            if (title == null || artist == null) {
+                val mmr = MediaMetadataRetriever()
+                try {
+                    // Use the context-based setDataSource, it handles URIs better than FileDescriptors
+                    mmr.setDataSource(this@MainActivity, uri)
+                    title = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                    artist = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                    art = mmr.embeddedPicture
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    mmr.release()
+                }
+            }
+
+            // STEP 3: Last resort - use the actual filename
+            if (title.isNullOrEmpty()) {
+                title = uri.lastPathSegment?.substringAfterLast("/")?.substringBeforeLast(".") ?: "Unknown Song"
+            }
+            if (artist.isNullOrEmpty()) artist = "Unknown Artist"
+
+            val metadata = MediaMetadata.Builder()
+                .setTitle(title)
+                .setArtist(artist)
+                .setDisplayTitle(title)
+                .setArtworkData(art, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                .build()
+
+            val singleItem = MediaItem.Builder()
+                .setMediaId(uri.toString())
+                .setUri(uri)
+                .setMediaMetadata(metadata)
+                .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(uri).build())
+                .build()
+
+            withContext(Dispatchers.Main) {
+                val list = listOf(singleItem)
+                controller?.setMediaItems(list)
+                controller?.prepare()
+                controller?.play()
+
+                // Immediately force the UI to update
+                updateBottomPlayerUI(singleItem)
+                updateQueueUI(list)
+            }
         }
     }
 

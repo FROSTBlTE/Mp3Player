@@ -37,9 +37,23 @@ class QueueAdapter(private val fullList: List<MediaItem>, private val onClick: (
         holder.title.text = meta.title
         holder.artist.text = meta.artist
 
+        val isSelected = fullList.indexOf(item) == selectedIdx
+
         // 1. Define the source: prioritize the extracted bytes (artworkData)
         // 2. If bytes are missing, try the mediaUri as a fallback
         val artSource: Any? = meta.artworkData ?: item.requestMetadata.mediaUri
+
+        if (isSelected) {
+            holder.itemView.setBackgroundColor(Color.parseColor("#33FFC107")) // Translucent Amber background
+            holder.title.setTextColor(Color.parseColor("#FFC107"))            // Solid Amber text
+            holder.title.setTypeface(null, Typeface.BOLD)
+        } else {
+            holder.itemView.setBackgroundColor(Color.TRANSPARENT)
+            holder.title.setTextColor(Color.WHITE)
+            holder.title.setTypeface(null, Typeface.NORMAL)
+        }
+
+        holder.itemView.setOnClickListener { onClick(fullList.indexOf(item)) }
 
         Glide.with(holder.itemView.context)
             .load(artSource)
@@ -50,13 +64,6 @@ class QueueAdapter(private val fullList: List<MediaItem>, private val onClick: (
             .error(R.drawable.ic_play)
             .centerCrop()
             .into(holder.art)
-
-        // Selection logic
-        val isSel = fullList.indexOf(item) == selectedIdx
-        holder.title.setTextColor(if (isSel) Color.parseColor("#FFC107") else Color.WHITE)
-        holder.title.setTypeface(null, if (isSel) Typeface.BOLD else Typeface.NORMAL)
-
-        holder.itemView.setOnClickListener { onClick(fullList.indexOf(item)) }
     }
 
     override fun getItemCount() = displayList.size
