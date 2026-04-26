@@ -6,4 +6,8 @@
     </style>
 
     <style name="Theme.MyMP3Player" parent="Base.Theme.MyMP3Player" />
+    <style name="RoundedSquare">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">8dp</item>
+    </style>
 </resources>
